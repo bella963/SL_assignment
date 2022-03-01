@@ -1,0 +1,524 @@
+---
+title: "SL_Assignment2"
+author: "Bella Shao"
+date: "12/6/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tinytex)
+library(MASS)
+library(leaps)
+library(splines)
+library(mgcv)
+library(e1071)
+library(corrplot)
+library(tree)
+library(randomForest)
+library(partykit)
+library(gbm)
+library(caret)
+```
+
+
+
+```{r}
+rm(list = ls())
+cat("\014")
+```
+
+```{r}
+#read the data frame
+MH_data <- read.table("MHpredict.csv", sep = ",", header = TRUE)
+
+#convert character variables to factors
+MH_data$disType <- as.factor(MH_data$disType)
+MH_data$Sexe <- as.factor(MH_data$Sexe)
+MH_data$pedigree <- as.factor(MH_data$pedigree)
+MH_data$alcohol <- as.factor(MH_data$alcohol)
+MH_data$bTypeDep <- as.factor(MH_data$bTypeDep)
+MH_data$bSocPhob <- as.factor(MH_data$bSocPhob)
+MH_data$bGAD <- as.factor(MH_data$bGAD)
+MH_data$bPanic <- as.factor(MH_data$bPanic)
+MH_data$bAgo <- as.factor(MH_data$bAgo)
+MH_data$sample <- as.factor(MH_data$sample)
+MH_data$RemDis <- as.factor(MH_data$RemDis)
+MH_data$ADuse <- as.factor(MH_data$ADuse)
+MH_data$PsychTreat <- as.factor(MH_data$PsychTreat)
+MH_data$dep_sev_fu <- as.numeric(MH_data$dep_sev_fu)
+
+```
+
+```{r}
+head(MH_data)
+```
+```{r}
+
+plot(dep_sev_fu ~ ., data = MH_data, col = "skyblue")
+```
+```{r}
+#plot(log(MH_data$dep_sev_fu))
+#plot(MH_data$dep_sev_fu)
+```
+
+At the first look of the data set, we have 20 potential predictors. The first step is to identify which predictors are highly related to the response variable "dep_sev_fu". By plotting the response variable to all the 20 candidate predictors respectively, we can have a basic and direct impression of how each potential predictors are related to the response variable. The plots show that some predictors such as "disType" and "IDS" clearly have relationships with response variable, other predictors might also contribute to response variable, which will be explored in the following sections.
+
+
+
+```{r}
+#correlations between numeric predictors
+MH_cormat <- cor(MH_data[,c("Age","aedu","IDS","BAI","FQ","LCImax","AO")])
+corrplot(MH_cormat)
+
+```
+
+
+```{r}
+#best subset selection
+BSS <- regsubsets(dep_sev_fu ~ ., data = MH_data, nvmax = 24)
+summary_bss <- summary(BSS)
+summary_bss
+#plot(summary_bss$bic)
+#plot(summary_bss$adjr2)
+```
+
+```{r}
+plot(BSS, scale = "Cp")
+plot(summary_bss$bic, ylab = "BIC", xlab = "Number of predictors")
+plot(summary_bss$cp, ylab = "Cp", xlab = "Number of predictors")
+```
+```{r}
+set.seed(2876426)
+
+train <- sample(nrow(MH_data), 1000, replace = FALSE) #split the dataset into two subsets, 1000 samples are for training data, the rest samples are for test subset
+
+
+Folds <- sample(rep(1:10, times = 100)) # 10 equal folds for training data
+```
+
+## 1.
+In order to explore the relationships between "dep_sev_fu" and candidate predictors and which predictors are more important to response variable, we will use three methods. The first method is Generalized Additive model with smoothing splines for related predictors. The reasons are as follows:
+    
+    + We have multiple predictors in the dataset
+    + Some predictors might have nonlinear relationship with response variable
+    + GAM is additive model, and the dataset has numeric and factor predictors
+    + Smoothing spline is a good method to penalize overfitting of data points
+Even though GAM is not a suitable method to perform predictor selection, we can still inspect the significance for each candidate predictor and only keep those significant ones.
+
+The second method we are going to experiment with is Ensemble trees, which includes random forest and boosting method. We choose this method is because:
+     
+     + Since we have many candidate predictors, random forest is good for feature selection 
+     + The variance can decrease substantially in the prediction without increasing much bias and the bias can remain relatively stable because of Out-Of-Bag property
+     + The importance of predictors can be assessed
+     + Boosting is additive and can decrease bias 
+Besides the advantages of random forest and boosting, we will compare the two methods and to check which method is more suitable for out data predictions.
+
+At the final experiment, we will implement support vector machines method to predict "dep_sev_fu" scores. The benefits of implementing support vector machines method are as follows:
+   
+     + We don't need to consider specifically the distribution of the data
+     + Since there are quite a few predictors in the data set, SVM can handle high dimensions well with kernel functions, which can map n-dimensional data to different dimensions by using dot products
+     + Support vector machines only rely on relevant support vectors, not all the data points
+    
+
+
+
+
+## 2.
+
+In this section, we will implement each method mentioned in the previous question and assess which method can predict the best results. We split the data into training and test datasets with 1000 samples and 152 samples respectively. 
+
+### Generalized additive model(GAM)
+
+Firstly, in order to assess the significance of each candidate predictors to the response variable, we fit GAM model with all predictors and full data set. Here comes to a problem with fitting the model. Since the candidate predictor "aedu" (Years of education completed) does not have enough data points to fit the model, we have to expand the basis complexity of "aedu" to k = 5, which means adding more basis functions to this predictor. k equals to 5 is randomly chosen, which is already big enough to stablize the model fitting. In addtion, in this implementation, we set the method to restricted maximum likelihood estimation. With this REML estimation method, the linear effects are treated as unpenalized fixed effects and the random effects are for non-linear effects, which penalizes towards to zero. Generalized cross validation is another method can be used for fitting the model. We will evaluate which fitting method performs better in our case.
+
+According to the summary results of GAM model with full data, it is clear that almost half of the candidate predictors are not even statistically significant. This situation is inline with what we anticipated in the first step. In this case, we keep all the predictors with minimum significance level smaller than 0.05. These predictors are "disType", "Sexe", "bGAD", "bPanic", "sample", "PsychTreat","aedu", "IDS", "AO".
+
+
+Next, we refit the GAM model again with remaining predictors. At this time, we use training data set.
+
+```{r}
+#gam model with all predictors and full dataset
+gam_full <- gam(dep_sev_fu ~ disType + Sexe + s(Age) + s(aedu, k = 5) +  s(IDS) + s(BAI) +  s(FQ)+ s(LCImax) + pedigree + alcohol + bTypeDep + bSocPhob + bGAD +  bPanic + bAgo + s(AO) + RemDis + sample + ADuse + PsychTreat, data = MH_data, method = "REML")
+
+
+summary(gam_full)
+
+
+#plot(gam_model, residuals = TRUE, col = "blue")
+```
+
+
+Next, we refit the GAM model again with remaining predictors. At this time, we use training data set. The results reveal that the majority of the predictors are statistically significant at 5% significance level, where the most significant predictors are "disType" and "IDS" with the smallest p value, followed by “PsychTreatTRUE” and “AO". The rest of the predictors are less statistically significant with higher p values, but they are still below 5%. Additionally, when inspecting the smooth terms, the effective degrees of freedom for "aedu" is 1.015, which is approximately linear. We can also observe this linear relationship from graph 1. Hence we refit this model without smoothing "aedu". The results reveal that there is not much changes to the previous fitting and the relevant predictors are still statistically significant. Furthermore, we observe that the two categories of disType, which are comorbid disorder and depressive disorder are positively correlated to response variable, whereas the TRUE category PsychTreat is negatively related to dep_sev_fu. For smoothing terms, both of IDS and AO positively contribute to reponse variable dep_sev_fu.
+
+
+
+
+```{r}
+#gam model with selected significant predictors with training dataset
+gam1 <- gam(dep_sev_fu ~ disType + Sexe + s(aedu, k = 5) + s(IDS) + bGAD +  bPanic  + s(AO) + sample + PsychTreat, data = MH_data[train,], method = "REML")
+
+summary(gam1)
+
+
+plot(gam1, residuals = TRUE, col = "blue")
+```
+
+
+
+```{r}
+#refit GAM model with "aedu" as linear predictor
+gam2 <- gam(dep_sev_fu ~ disType + Sexe + aedu + s(IDS) + bGAD +  bPanic  + s(AO) + sample + PsychTreat, data = MH_data[train,], method = "REML")
+
+summary(gam2)
+
+par(mfrow = c(2,3))
+plot(gam2, residuals = TRUE, col = "skyblue")
+```
+Then we fit the GAM model again with method of GCV. We perform 10-fold cross validation on the training data to evaluate which fitting method yields lower prediction errors. As to the predicted mean squared errors, REML method yields slightly smaller MSE than GCV method, which are 14.73 for REML and 14.77 for GCV respectively. Next we use GAM model with REML method to predict "dep_sev_fu" using test data set. This yields an MSE of 19.26. 
+In general, the predicted MSE are too big for both methods, which indicates that GAM model might not be a proper estimator for this model. 
+
+
+
+
+
+```{r}
+#fit gam with "GCV" method
+gam3 <- gam(dep_sev_fu ~ disType + Sexe + aedu + s(IDS) + bGAD +  bPanic  + s(AO) + sample + PsychTreat, data = MH_data[train,])
+
+summary(gam3)
+
+par(mfrow = c(2,3))
+plot(gam3, residuals = TRUE, col = 1)
+```
+
+```{r}
+#10-fold cross validation for training data
+pred_dt <- as.data.frame(matrix(NA, nrow = length(train), ncol = 2))
+names(pred_dt) <- c("REML", "GCV")
+
+for (k in 1:10){
+  gam_REML <- gam(dep_sev_fu ~ disType + Sexe + aedu + s(IDS) + bGAD +  bPanic  + s(AO) + sample + PsychTreat, data = MH_data[train,][Folds!=k,], method = "REML") #gam_REML
+  
+  gam_GCV <- gam(dep_sev_fu ~ disType + Sexe + aedu + s(IDS) + bGAD +  bPanic  + s(AO) + sample + PsychTreat, data = MH_data[train,][Folds!=k,]) #gam_GCV
+  
+  pred_dt$REML[Folds == k] <- predict(gam_REML, newdata = MH_data[train,][Folds == k,], type = "response")
+  pred_dt$GCV[Folds == k] <- predict(gam_GCV, newdata = MH_data[train,][Folds == k,], type = "response")
+  
+}
+
+
+colMeans((pred_dt - MH_data[train,]$dep_sev_fu)^2)
+```
+
+```{r}
+gam_REML <- gam(dep_sev_fu ~ disType + Sexe + aedu + s(IDS) + bGAD +  bPanic + s(AO) + sample  + PsychTreat, data = MH_data[train,], method = "REML")
+
+summary(gam_REML)
+
+pred_REML_y <- predict(gam_REML, newdata = MH_data[-train,], type = "response") #predict dep_sev_fu using test data
+
+
+mean((pred_REML_y - MH_data[-train,]$dep_sev_fu)^2)
+```
+
+
+
+
+
+
+### Random forest and Boosting
+
+```{r}
+#bagtree <- randomForest(dep_sev_fu ~ ., data = MH_data[train,], importance = TRUE, mtry = 20)
+#bagtree
+
+#plot(bagtree)
+```
+In this section, we implement random forest regression from r package "randomForest". Since we are experimenting with random forest regression, the setting for "mtry" parameter should be the number of predictors divided by 3. Keeping other function parameters as default, the resultant graph reveals that after generating around 100 trees, this model starts to converge with a mean squared error of 15.61 for training data. And the test MSE by plugging in test data in predict function is 20.11. The predicted test error is not ideal. Hence, we will subsequently implement boosting ensemble method and then evaluate whether the results can improve.
+
+Nevertheless, we can still get an idea of which predictors are strongly contributed to the response variable. Regarding to the importance plots of this random forest model, we can clearly observe that "IDS" contributes the most to the increase in MSE, which is around 55.91%, and "disType" comes to the second with 31.52%. But at the third, "bTypeDep" takes the position with 17.34%, while it is not even statistically significant in the previous GAM spline regression. "PsychTreat" comes to the fourth important position with 10.63% contribution to the increase in MSE. In the IncNodePurity plot, order of the predictors is slightly different, and "IDS" and "disType" are still the most and second most influenced predictors. In additon, from the partial dependence plots, we can observe that "IDS" is positive related to response variable, while "AO" is in the opposite direction. 
+
+```{r}
+#?randomForest
+
+rf1 <- randomForest(dep_sev_fu ~ ., data = MH_data[train,], importance = TRUE)
+
+rf1
+
+plot(rf1, cex.lab = 0.85, cex.axis = 0.7)
+```
+```{r}
+pred_rf1 <- predict(rf1, newdata = MH_data[-train,], type = "response")
+
+mean((MH_data[-train,]$dep_sev_fu - pred_rf1)^2)
+```
+
+```{r}
+importance(rf1)
+```
+
+```{r}
+varImpPlot(rf1, cex = 0.8)
+```
+```{r}
+par(mfrow = c(2,2))
+partialPlot(rf1, x.var = "IDS", pred.data = MH_data[train,], rug = TRUE)
+partialPlot(rf1, x.var = "disType", pred.data = MH_data[train,])
+partialPlot(rf1, x.var = "AO", pred.data = MH_data[train,])
+partialPlot(rf1, x.var = "PsychTreat", pred.data = MH_data[train,])
+```
+The r package and function of boosting ensemble algorithm is gbm. At the first attempt, we set the number of trees equal to 1000, tree depth to 4 and shrinkage to 0.01. The results indicate that squared error loss start to increase from approximately 320 iterations as well as out of bag change in squared error loss start to become negative instead of positive. The predicted test error is about 19.13, which is lower than previous random forest method. As to improving the performance of this boosting ensemble predictions, we create a parameter tuning grid which consists of n.trees equals to 100, 500 and 1000, interaction.depth equals to 3,4 and 5, and shrinkage equals to 0.1, 0.01 and 0.001. Using train() function from caret r package, the tuning results show that the best-performing parameters are n.trees = 500, interaction.depth = 3 and shrinkage = 0.01. By plugging in these parameters, predicted test error is 19.60, which is even worse than our first attempt. Thus we keep the first attempt boosting ensemble model as our final model.
+
+
+```{r}
+?gbm
+#boosting ensemble method 
+tr_boost <- gbm(dep_sev_fu ~ ., data = MH_data[train,], n.trees = 1000, interaction.depth = 4, shrinkage = 0.01)
+
+tr_boost
+
+
+gbm.perf(tr_boost, oobag.curve = TRUE, method = "OOB")
+
+
+```
+```{r}
+#predicted training MSE for boosting ensemble tree method
+pred_train <- predict(tr_boost, newdata = MH_data[train,], type = "response")
+mean((MH_data[train,]$dep_sev_fu - pred_train)^2)
+```
+
+
+
+
+```{r}
+#predicted test errors for boosting ensemble method
+
+pred_boost <- predict(tr_boost, newdata = MH_data[-train,], type = "response")
+mean((MH_data[-train,]$dep_sev_fu - pred_boost)^2)
+
+```
+
+
+
+Subsequently, we inspect the importance of predictors. Based on the graph below, predictor "IDS" has the highest influence on "dep_sev_fu" with magnitude of 38.96, and with higher IDS, "dep_sev_fu" increases. "disType" follows as the second highest influence predictor on response variable with magnitude of 14.64. This is a categorical predictor, and "comorbid disorder" category has the most impact on response. Here follows the third influenced predictor, which is "AO" with magnitude of 7.94 and it has a negtive relationship with response "dep_sev_fu".
+
+```{r}
+summary(tr_boost, cex.lab = 0.7)
+
+```
+
+
+
+```{r}
+
+plot(tr_boost, i.var = "IDS")
+plot(tr_boost, i.var = "disType")
+plot(tr_boost, i.var = "AO")
+
+```
+
+
+```{r}
+#para_grid <- expand.grid(n.trees = c(100, 500, 1000),
+                         #interaction.depth = c(3,4,5),
+                         #shrinkage = c(0.1, 0.01, 0.001),
+                         #n.minobsinnode = 8)
+
+#para_grid
+```
+
+```{r}
+#boost_tune <- train(dep_sev_fu ~ ., data = MH_data[train,], tuneGrid = para_grid, method = "gbm", verbose = FALSE) 
+```
+
+
+```{r}
+#plot(boost_tune)
+```
+
+```{r}
+#boost_tune$bestTune
+```
+
+```{r}
+#boostFit <- gbm(dep_sev_fu ~ ., data = MH_data[train,], n.trees = 500, interaction.depth = 3, shrinkage = 0.01, n.minobsinnode = 8)
+#boostFit
+
+#summary(boostFit)
+
+
+```
+```{r}
+#gbm.perf(boostFit, oobag.curve = TRUE, method = "OOB")
+```
+```{r}
+#pred_boostFit <- predict(boostFit, newdata = MH_data[-train,], type = "response")
+
+#mean((MH_data[-train,]$dep_sev_fu - pred_boostFit)^2)
+```
+
+### Support vector machine
+
+Support vector machines can also be used for regression analysis. In this part, we are experimenting with SVM method to predict "dep_sev_fu". The main principle of support vector machines regression is the same as SVM for classifications, which is maximizing margin and the margin only depends on some specific vectors. Cost constraint as well determines the level of violating margins. For this method, we experiment with three different kernel functions. They are linear, polynomial and radial kernels. When implementing each kernel, we will tune parameters respect to the specific kernel function. We use r package e1071 to run SVM algorithm.
+
+#### Linear kernel
+For linear kernel, we only need to tune the cost parameters. We pre define a cost vector that consists of 0.001, 0.01, 0.1, 1, 5, 10, 100. We employ tune() function in r to help us do the task. The best parameters for cost is 1. By fitting SVM with the best parameter, our predicted test error based on linear kernel is 20.41. 
+
+The drawbacks of SVM is that it cannot distinguish important predictors, instead it only relies on supporting data points. To this end, we employ the results from subset regression (introduction part), where we refit support vector machines algorithm with only statistically significant predictors. The predicted test error improves to 19.81. Thus, for the rest of SVM experiments, we only use statistically significant predictors. 
+
+```{r}
+# tuning cost parameters for linear kernel
+costs <- c(0.001, 0.01, 0.1, 1, 5, 10, 100)
+
+out_linear <- tune(svm, dep_sev_fu ~ ., data = MH_data[train,], ranges = list(cost = costs))
+
+out_linear$best.parameters
+
+# svm model with best parameter
+svm_linear1 <- svm(dep_sev_fu ~ ., data = MH_data[train,], kernel = "linear", cost = out_linear$best.parameters[[1]])
+
+# predicted response using best parameter and test data
+pred_linear1 <- predict(svm_linear1, newdata = MH_data[-train,], type = "response")
+
+mean((MH_data[-train,]$dep_sev_fu - pred_linear1)^2)#predicted test error when cost=1
+
+#SVM model with only significant predictors
+svm_linear2 <- svm(dep_sev_fu ~ disType + Sexe + aedu + IDS + bGAD +  bPanic + AO + sample  + PsychTreat, data = MH_data[train,], kernel = "linear", cost  = 1)
+
+pred_linear2 <- predict(svm_linear2, newdata = MH_data[-train,])
+
+mean((pred_linear2 - MH_data[-train,]$dep_sev_fu)^2) #test error of linear kernel with significant predictors
+
+
+
+```
+
+#### Polynomial kernel
+For polynomial kernel function, we pre define a grid vector of polynomial orders, which are 2, 3, 4 and 5. We supply polynomial orders grid and costs grid together into the tuning function. The resulted best parameters are cost = 1 and order = 2 and the predicted test error is 22.08. 
+
+```{r}
+#pre define polynomial orders
+poly_order <- c(2,3,4,5)
+
+#10-fold cv for polynomial parameters
+out_poly <- tune(svm, dep_sev_fu ~ disType + Sexe + aedu + IDS + bGAD +  bPanic + AO + sample  + PsychTreat, 
+                 data = MH_data[train,], 
+                 ranges = list(cost = costs, degree = poly_order))
+
+out_poly$best.parameters
+
+svm_poly <- svm(dep_sev_fu ~ disType + Sexe + aedu + IDS + bGAD +  bPanic + AO + sample + PsychTreat, 
+                data = MH_data[train,], kernel = "polynomial", 
+                cost = out_poly$best.parameters[[1]], 
+                order = out_poly$best.parameters[[2]])
+
+pred_poly <- predict(svm_poly, newdata = MH_data[-train,], type = "response")
+
+mean((MH_data[-train,]$dep_sev_fu - pred_poly)^2)
+
+```
+
+#### radial kernel
+
+The procedure is the same as before for radial kernel function, but the difference is that we use predefined gamma grid and cost grid together when tuning the parameters.Gamma parameter is the smoothness of the decision hyper plane, in our case, it's the wiggliness of the regression line. The gamma grid is a vector consists of 0.1, 0.3, 0.5, 0.8 and 1.The resulted best parameters are cost = 1 and gamma = 0.1. Moreover, the predicted test mean squared error based on best performance model is 19.75. 
+
+Overall, radial kernel SVM generates the lowest mean squared error in the test data set. Thus our final SVM predictor is with radial kernel. 
+
+```{r}
+#pre define gamma grid
+gamma_grid <- c(0.1, 0.3, 0.5, 0.8, 1)
+
+out_radial <- tune(svm, dep_sev_fu ~ disType + Sexe + aedu + IDS + bGAD +  bPanic + AO + sample  + PsychTreat, 
+                   data = MH_data[train,], 
+                   ranges = list(cost = costs, gamma = gamma_grid))
+
+out_radial$best.parameters
+
+
+
+svm_radial <- svm(dep_sev_fu ~ disType + Sexe + aedu + IDS + bGAD +  bPanic + AO + sample  + PsychTreat,
+                  kernel = "radial",
+                  data = MH_data[train,], 
+                  cost = out_radial$best.parameters[[1]], 
+                  gamma = out_radial$best.parameters[[2]])
+
+
+pred_radial <- predict(svm_radial, newdata = MH_data[-train,], type = "response")
+
+mean((MH_data[-train,]$dep_sev_fu - pred_radial)^2)
+
+```
+
+```{r}
+#predicted train MSE for SVM with radial kernel
+pred_train_radial <- predict(svm_radial, newdata = MH_data[train,], type = "response")
+mean((MH_data[train,]$dep_sev_fu - pred_train_radial)^2)
+```
+
+
+
+In summary, from Table 1, we can see that boosting ensemble method yields the lowest predicted test MSE of 19.13. The advantages of tree based ensemble methods are automatically selecting most significant predictors when running the algorithms. Moreover, the most influenced predictors are almost the same estimated by all three methods, but with slightly variations in orders. Overall, the most impacted predictors are "IDS" with positive effect, "disTpye" with positive effect, "AO" with negative effect as well as "PsychTreat" also with negative effect. 
+
+By comparing the pairwise differences of predicted values estimated by either two of the methods, we can generate confidence intervals of each pair difference by using t.test() function in r. In table 2, we display each pairwise predictions difference. All three pairwise prediction differences are not statistically significant. Predicted values from boosting ensemble method and SVM method have the widest intervals, which means they produce the most different response values, whereas GAM REML method and boosting ensemble method produce the most similar values.
+
+
+
+
+
+
+```{r}
+#pred_REML_y
+
+#pred_boost
+
+#pred_radial
+
+t.test(pred_REML_y - pred_boost)
+
+t.test(pred_REML_y - pred_radial)
+
+t.test(pred_boost - pred_radial)
+```
+```{r}
+0.1891866 - -0.1567517 
+0.28422327- -0.03617908
+0.26748877- -0.05187951
+```
+
+##6.
+
+
+```{r}
+DS_data <- read.table("DSthymia.csv", sep = ",", header = TRUE)
+
+DS_data$disType <- as.factor(DS_data$disType)
+DS_data$Sexe <- as.factor(DS_data$Sexe)
+DS_data$pedigree <- as.factor(DS_data$pedigree)
+DS_data$alcohol <- as.factor(DS_data$alcohol)
+DS_data$bTypeDep <- as.factor(DS_data$bTypeDep)
+DS_data$bSocPhob <- as.factor(DS_data$bSocPhob)
+DS_data$bGAD <- as.factor(DS_data$bGAD)
+DS_data$bPanic <- as.factor(DS_data$bPanic)
+DS_data$bAgo <- as.factor(DS_data$bAgo)
+DS_data$RemDis <- as.factor(DS_data$RemDis)
+DS_data$sample <- as.factor(DS_data$sample)
+DS_data$ADuse <- as.factor(DS_data$ADuse)
+DS_data$PsychTreat <- as.factor(DS_data$PsychTreat)
+
+
+DS_data
+```
+```{r}
+predict(tr_boost, newdata = DS_data, type = "response")
+```
+```{r}
+sd(MH_data$dep_sev_fu)
+range(MH_data$IDS)
+range(MH_data$AO)
+
+
+
+```
+
